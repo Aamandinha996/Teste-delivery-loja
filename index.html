@@ -1,1 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Calculadora Delivery - Teste</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; padding:20px; background:#f7f9fc; color:#222; }
+    .card { max-width:520px; margin:0 auto; background:white; padding:18px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.06); }
+    input { width:100%; padding:10px; margin:8px 0; border-radius:6px; border:1px solid #ddd; }
+    button { padding:10px 14px; border-radius:8px; border:none; background:#2b7de9; color:white; cursor:pointer; }
+    .small { font-size:0.9rem; color:#666; margin-top:8px; }
+    pre { background:#111; color:#bfe; padding:10px; border-radius:6px; overflow:auto; max-height:180px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>📦 Calculadora de Delivery</h2>
+    <p><strong>Origem (loja):</strong> Estrada dos Mirandas, São Paulo - SP</p>
+
+    <label>CEP (somente números):</label>
+    <input id="cep" placeholder="Ex: 01234567" />
+
+    <label>Número da casa:</label>
+    <input id="numero" placeholder="Ex: 100" />
+
+    <div style="display:flex; gap:8px; margin-top:10px;">
+      <button id="btnCalcular">Calcular Delivery</button>
+      <button id="btnTestAddr" style="background:#6c757d;">Testar com endereço completo</button>
+    </div>
+
+    <p id="resultado" class="small"></p>
+
+    <h4 style="margin-top:14px;">Debug / Resposta da API</h4>
+    <pre id="debug">Sem execução ainda.</pre>
+  </div>
+
+  <script>
+    // ---- CONFIG ----
+    const lojaEndereco = "Estrada dos Mirandas, São Paulo - SP";
+    const precoPorBloco = 8; // R$8
+    const kmPorBloco = 5;    // cada 5 km
+    // ----------------
+
+    const output = document.getElementById('resultado');
+    const debug = document.getElementById('debug');
+
+    function cleanCEP(raw) {
+      return (raw || '').replace(/\D/g, '');
+    }
+
+    async function geocodeAddress(address) {
+      return new Promise((resolve, reject) => {
+        if (!window.google || !google.maps || !google.maps.Geocoder) {
+          reject(new Error('Google Maps JS não carregado.'));
+          return;
+        }
+        const geocoder = new google.maps.Geocoder();
+        geocoder.geocode({ address: address }, (results, status) => {
+          if (status === 'OK' && results && results[0]) {
+            resolve(results[0]);
+          } else {
+            reject(new Error('Geocode falhou: ' + status));
+          }
+        });
+      });
+    }
+
+    function calcPriceFromKm(distKm) {
+      return Math.ceil(distKm / kmPorBloco) * precoPorBloco;
+    }
+
+    function callDistanceMatrix(originAddress, destAddress) {
+      return new Promise((resolve, reject) => {
+        const service = new google.maps.DistanceMatrixService();
+        service.getDistanceMatrix({
+          origins: [originAddress],
+          destinations: [destAddress],
+          travelMode: 'DRIVING',
+          unitSystem: google.maps.UnitSystem.METRIC,
+          avoidHighways: false,
+          avoidTolls: false
+        }, (response, status) => {
+          if (status !== 'OK') {
+            reject(new Error('DistanceMatrix falhou: ' + status));
+            return;
+          }
+          resolve(response);
+        });
+      });
+    }
+
+    async function calcularDeliveryFlow(cep, numero) {
+      output.textContent = "Calculando... (aguarde)";
+      debug.textContent = "Iniciando fluxo...";
+      try {
+        const cepClean = cleanCEP(cep);
+        if (!cepClean || !numero) throw new Error('Preencha CEP e número.');
+
+        // Primeiro tentamos geocodificar "CEP + número" — se falhar, tentamos só "CEP"
+        let tentativa1 = `${cepClean} ${numero}, Brasil`;
+        let destResult = null;
+
+        try {
+          debug.textContent = 'Tentando geocodificar: ' + tentativa1;
+          destResult = await geocodeAddress(tentativa1);
+        } catch (err1) {
+          debug.textContent = 'Falha primeira tentativa: ' + err1.message + '\nTentando apenas CEP...';
+          try {
+            const tentativa2 = `${cepClean}, Brasil`;
+            destResult = await geocodeAddress(tentativa2);
+          } catch (err2) {
+            throw new Error('Não foi possível localizar o CEP fornecido. Tente um CEP diferente ou use endereço completo.');
+          }
+        }
+
+        const destFormatted = destResult.formatted_address;
+        debug.textContent = 'Destino resolvido como: ' + destFormatted + '\nChamando Distance Matrix...';
+
+        const dm = await callDistanceMatrix(lojaEndereco, destFormatted);
+        debug.textContent = JSON.stringify(dm.rows[0].elements[0], null, 2);
+
+        const elemento = dm.rows[0].elements[0];
+        if (!elemento || elemento.status !== 'OK') {
+          throw new Error('Não foi possível calcular rota entre a loja e o endereço. status: ' + (elemento ? elemento.status : 'null'));
+        }
+
+        const distanciaTexto = elemento.distance.text; // ex: "12.3 km"
+        const distanciaKm = (elemento.distance.value || 0) / 1000; // value em metros
+
+        const preco = calcPriceFromKm(distanciaKm);
+
+        output.innerHTML = `🚗 Distância: <strong>${distanciaTexto}</strong><br>💰 Valor do delivery: <strong>R$ ${preco},00</strong><br>Endereço usado: ${destFormatted}`;
+      } catch (err) {
+        output.textContent = 'Erro: ' + err.message;
+        console.error(err);
+      }
+    }
+
+    // Ações dos botões
+    document.getElementById('btnCalcular').addEventListener('click', () => {
+      const cep = document.getElementById('cep').value;
+      const numero = document.getElementById('numero').value;
+      calcularDeliveryFlow(cep, numero);
+    });
+
+    // botão de teste rápido usando endereço completo (para diagnosticar)
+    document.getElementById('btnTestAddr').addEventListener('click', () => {
+      document.getElementById('cep').value = '';
+      document.getElementById('numero').value = '';
+      // exemplo de endereço completo para teste
+      const exemplo = prompt('Cole aqui um endereço completo para testar (ex: Rua da Consolação 100, São Paulo, SP):');
+      if (!exemplo) return;
+      calcularDeliveryFlow(exemplo, ''); // passamos endereço completo como "cep" e numero vazio — o geocode tentará isso
+    });
+
+    // Observação: este arquivo depende do carregamento da Google Maps JS API com callback initMap
+    function initMap() {
+      // mapa não é necessário — apenas garantimos que a API está pronta
+      console.log('Google Maps API carregada.');
+      debug.textContent = 'Google Maps API carregada. Pronto para calcular.';
+    }
+    window.initMap = initMap;
+  </script>
+
+  <!-- Substitua SUA_CHAVE_API pela sua chave -->
+  <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=SUA_CHAVE_API&libraries=places&callback=initMap">
+  </script>
+</body>
+</html>
 
