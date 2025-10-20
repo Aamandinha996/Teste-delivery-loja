@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Calculadora Delivery</title>
+  <title>Calculadora Delivery Híbrida</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body { font-family: Arial, sans-serif; background:#f7f9fc; padding:20px; color:#222; }
@@ -10,18 +10,20 @@
     input { width:100%; padding:10px; margin:8px 0; border-radius:6px; border:1px solid #ddd; }
     button { padding:10px 14px; border-radius:8px; border:none; background:#2b7de9; color:white; cursor:pointer; }
     .small { font-size:0.9rem; color:#666; margin-top:8px; }
-    pre { background:#111; color:#bfe; padding:10px; border-radius:6px; overflow:auto; max-height:180px; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>📦 Calculadora de Delivery</h2>
+    <h2>📦 Calculadora de Delivery Híbrida</h2>
     <p><strong>Origem (loja):</strong> Estrada dos Mirandas, São Paulo - SP</p>
 
-    <label>CEP (somente números):</label>
+    <label>CEP do cliente (somente números):</label>
     <input id="cep" placeholder="Ex: 01234567">
 
-    <label>Número da casa:</label>
+    <label>Rua (opcional):</label>
+    <input id="rua" placeholder="Ex: Rua Exemplo">
+
+    <label>Número da casa (opcional):</label>
     <input id="numero" placeholder="Ex: 100">
 
     <button onclick="calcularDelivery()" style="margin-top:10px;">Calcular Delivery</button>
@@ -34,23 +36,17 @@
     const precoPorBloco = 8; // R$8
     const kmPorBloco = 5;    // cada 5 km
 
-    function cleanCEP(raw) {
-      return (raw || '').replace(/\D/g, '');
-    }
-
-    function geocodeAddress(address) {
-      return new Promise((resolve, reject) => {
-        if (!window.google || !google.maps || !google.maps.Geocoder) {
-          reject('Google Maps JS não carregado.');
-          return;
-        }
-        const geocoder = new google.maps.Geocoder();
-        geocoder.geocode({ address: address }, (results, status) => {
-          if (status === 'OK' && results[0]) resolve(results[0]);
-          else reject('Falha ao localizar endereço: ' + status);
-        });
-      });
-    }
+    // Distância aproximada por CEP (para cálculo rápido)
+    const cepDistancia = {
+      "01000000": 2,
+      "01100000": 3,
+      "01200000": 5,
+      "01300000": 6,
+      "01400000": 7,
+      "01500000": 8,
+      "01600000": 10,
+      // adicione mais CEPs que você atende
+    };
 
     function calcPriceFromKm(distKm) {
       return Math.ceil(distKm / kmPorBloco) * precoPorBloco;
@@ -72,37 +68,40 @@
     }
 
     async function calcularDelivery() {
-      const cep = document.getElementById('cep').value.trim();
+      const cep = (document.getElementById('cep').value || '').replace(/\D/g,'');
+      const rua = document.getElementById('rua').value.trim();
       const numero = document.getElementById('numero').value.trim();
       const output = document.getElementById('resultado');
-      output.textContent = 'Calculando...';
 
-      if (!cep || !numero) {
-        output.textContent = 'Por favor, preencha CEP e número da casa.';
+      if (!cep) {
+        output.textContent = 'Por favor, digite um CEP válido.';
         return;
       }
 
-      const destino = cep + ', ' + numero + ', Brasil';
+      // Se o usuário digitar rua + número, tenta cálculo real via Google Maps
+      if (rua && numero) {
+        const enderecoCompleto = `${rua}, ${numero}, ${cep}, Brasil`;
+        output.textContent = 'Calculando distância real...';
 
-      try {
-        const geocode = await geocodeAddress(destino);
-        const destFormatted = geocode.formatted_address;
-
-        const dm = await callDistanceMatrix(lojaEndereco, destFormatted);
-        const elemento = dm.rows[0].elements[0];
-
-        if (elemento.status !== 'OK') {
-          output.textContent = 'Não foi possível calcular a distância. Verifique o CEP e número.';
-          return;
+        try {
+          const dm = await callDistanceMatrix(lojaEndereco, enderecoCompleto);
+          const elemento = dm.rows[0].elements[0];
+          if (elemento.status !== 'OK') {
+            output.textContent = 'Não foi possível calcular a distância. Verifique o endereço.';
+            return;
+          }
+          const distanciaKm = elemento.distance.value / 1000;
+          const distanciaTexto = elemento.distance.text;
+          const preco = calcPriceFromKm(distanciaKm);
+          output.innerHTML = `🚗 Distância: <strong>${distanciaTexto}</strong><br>💰 Valor do delivery: <strong>R$ ${preco},00</strong>`;
+        } catch (err) {
+          output.textContent = 'Erro ao calcular distância: ' + err;
         }
-
-        const distanciaKm = elemento.distance.value / 1000;
-        const distanciaTexto = elemento.distance.text;
+      } else {
+        // Caso contrário, usa distância aproximada por CEP
+        let distanciaKm = cepDistancia[cep] || 8; // padrão 8 km
         const preco = calcPriceFromKm(distanciaKm);
-
-        output.innerHTML = `🚗 Distância: <strong>${distanciaTexto}</strong><br>💰 Valor do delivery: <strong>R$ ${preco},00</strong>`;
-      } catch (err) {
-        output.textContent = 'Erro: ' + err;
+        output.innerHTML = `🚗 Distância aproximada: <strong>${distanciaKm} km</strong><br>💰 Valor do delivery: <strong>R$ ${preco},00</strong>`;
       }
     }
   </script>
@@ -111,4 +110,5 @@
   <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDiyfkCBwncJwOFA9lZ5Ng6W3M_qvQuVtQ&libraries=places"></script>
 </body>
 </html>
+
 
